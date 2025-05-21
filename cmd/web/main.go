@@ -26,7 +26,7 @@ func printUsage() {
 func main() {
 	// Define flags
 	port := flag.Int("port", 8080, "Port number for the web server")
-	host := flag.String("host", "localhost", "Host address for the web server")
+	host := flag.String("host", "0.0.0.0", "Host address for the web server")
 
 	// Set custom usage message
 	flag.Usage = printUsage
@@ -57,12 +57,34 @@ func main() {
 	// Construct metadata service
 	var metadataService web.VideoMetadataService
 	fmt.Println("Creating metadata service of type", metadataServiceType, "with options", metadataServiceOptions)
-	// TODO: Implement metadata service creation logic
+	switch metadataServiceType {
+	case "sqlite":
+		var err error
+		metadataService, err = web.NewSQLiteVideoMetadataService(metadataServiceOptions)
+		if err != nil {
+			fmt.Println("Error creating SQLite metadata service:", err)
+			return
+		}
+	default:
+		fmt.Println("Error: Unsupported metadata service type:", metadataServiceType)
+		return
+	}
 
 	// Construct content service
 	var contentService web.VideoContentService
 	fmt.Println("Creating content service of type", contentServiceType, "with options", contentServiceOptions)
-	// TODO: Implement content service creation logic
+	switch contentServiceType {
+	case "fs":
+		var err error
+		contentService, err = web.NewFSVideoContentService(contentServiceOptions)
+		if err != nil {
+			fmt.Println("Error creating filesystem content service:", err)
+			return
+		}
+	default:
+		fmt.Println("Error: Unsupported content service type:", contentServiceType)
+		return
+	}
 
 	// Start the server
 	server := web.NewServer(metadataService, contentService)
