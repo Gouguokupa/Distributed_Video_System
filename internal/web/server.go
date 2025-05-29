@@ -13,6 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"tritontube/internal/proto"
+
+	"google.golang.org/grpc"
 )
 
 type server struct {
@@ -22,7 +26,8 @@ type server struct {
 	metadataService VideoMetadataService
 	contentService  VideoContentService
 
-	mux *http.ServeMux
+	mux        *http.ServeMux
+	grpcServer *grpc.Server
 }
 
 func NewServer(
@@ -32,15 +37,34 @@ func NewServer(
 	return &server{
 		metadataService: metadataService,
 		contentService:  contentService,
+		grpcServer:      grpc.NewServer(),
 	}
 }
 
 func (s *server) Start(lis net.Listener) error {
+	// Start HTTP server
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("/upload", s.handleUpload)
 	s.mux.HandleFunc("/videos/", s.handleVideo)
 	s.mux.HandleFunc("/content/", s.handleVideoContent)
 	s.mux.HandleFunc("/", s.handleIndex)
+
+	// Start gRPC server
+	if nwService, ok := s.contentService.(*NetworkVideoContentService); ok {
+		proto.RegisterVideoContentAdminServiceServer(s.grpcServer, nwService)
+		go func() {
+			adminAddr := nwService.adminAddr
+			adminLis, err := net.Listen("tcp", adminAddr)
+			if err != nil {
+				fmt.Printf("Failed to listen for admin service: %v\n", err)
+				return
+			}
+			fmt.Printf("Starting admin service on %s\n", adminAddr)
+			if err := s.grpcServer.Serve(adminLis); err != nil {
+				fmt.Printf("Failed to serve admin service: %v\n", err)
+			}
+		}()
+	}
 
 	return http.Serve(lis, s.mux)
 }
@@ -86,7 +110,13 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) convertToDASH(videoId string, inputPath string) error {
 	// Create output directory for DASH files
-	outputDir := filepath.Join(s.contentService.(*FSVideoContentService).baseDir, videoId)
+	var outputDir string
+	if fsService, ok := s.contentService.(*FSVideoContentService); ok {
+		outputDir = filepath.Join(fsService.baseDir, videoId)
+	} else {
+		outputDir = filepath.Join("tmp", videoId)
+	}
+
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
@@ -124,6 +154,34 @@ func (s *server) convertToDASH(videoId string, inputPath string) error {
 	// Verify that the manifest file was created
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
 		return fmt.Errorf("manifest file was not created at %s", manifestPath)
+	}
+
+	// If using NetworkVideoContentService, write the files to the network storage
+	if nwService, ok := s.contentService.(*NetworkVideoContentService); ok {
+		// Read all files in the output directory
+		files, err := ioutil.ReadDir(outputDir)
+		if err != nil {
+			return fmt.Errorf("failed to read output directory: %v", err)
+		}
+
+		// Write each file to the network storage
+		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
+			data, err := ioutil.ReadFile(filepath.Join(outputDir, file.Name()))
+			if err != nil {
+				return fmt.Errorf("failed to read file %s: %v", file.Name(), err)
+			}
+			if err := nwService.Write(videoId, file.Name(), data); err != nil {
+				return fmt.Errorf("failed to write file %s to network storage: %v", file.Name(), err)
+			}
+		}
+
+		// Clean up local files after successful upload
+		if err := os.RemoveAll(outputDir); err != nil {
+			return fmt.Errorf("failed to clean up local files: %v", err)
+		}
 	}
 
 	return nil
@@ -180,8 +238,14 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save original video file
-	tempDir := filepath.Join(s.contentService.(*FSVideoContentService).baseDir, "temp")
+	// Create temp directory based on content service type
+	var tempDir string
+	if fsService, ok := s.contentService.(*FSVideoContentService); ok {
+		tempDir = filepath.Join(fsService.baseDir, "temp")
+	} else {
+		tempDir = filepath.Join("tmp", "temp")
+	}
+
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -227,6 +291,16 @@ func (s *server) handleVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Add formatted time for template
+	type VideoWithFormattedTime struct {
+		VideoMetadata
+		UploadedAt string
+	}
+	data := VideoWithFormattedTime{
+		VideoMetadata: *metadata,
+		UploadedAt:    metadata.UploadedAt.Format("2006-01-02 15:04:05"),
+	}
+
 	// Render video page
 	tmpl, err := template.New("video").Parse(videoHTML)
 	if err != nil {
@@ -234,7 +308,7 @@ func (s *server) handleVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tmpl.Execute(w, metadata); err != nil {
+	if err := tmpl.Execute(w, data); err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -262,9 +336,8 @@ func (s *server) handleVideoContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get content
-	contentPath := filepath.Join(s.contentService.(*FSVideoContentService).baseDir, videoId, filename)
-	data, err := ioutil.ReadFile(contentPath)
+	// Get content using the interface method
+	data, err := s.contentService.Read(videoId, filename)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.NotFound(w, r)

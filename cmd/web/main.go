@@ -81,6 +81,13 @@ func main() {
 			fmt.Println("Error creating filesystem content service:", err)
 			return
 		}
+	case "nw":
+		var err error
+		contentService, err = web.NewNetworkVideoContentService(contentServiceOptions)
+		if err != nil {
+			fmt.Println("Error creating network content service:", err)
+			return
+		}
 	default:
 		fmt.Println("Error: Unsupported content service type:", contentServiceType)
 		return

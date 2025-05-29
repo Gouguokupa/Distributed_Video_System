@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package proto;
+
+option go_package = "tritontube/internal/proto";
+
+// Storage service for handling video content
+service StorageService {
+  // Read a file from storage
+  rpc Read(ReadRequest) returns (ReadResponse) {}
+  
+  // Write a file to storage
+  rpc Write(WriteRequest) returns (WriteResponse) {}
+  
+  // Delete a file from storage
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {}
+
+  // List all video IDs stored on this node
+  rpc ListVideoIDs(ListVideoIDsRequest) returns (ListVideoIDsResponse) {}
+
+  // List all files for a video stored on this node
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse) {}
+}
+
+// Request to read a file
+message ReadRequest {
+  string video_id = 1;
+  string filename = 2;
+}
+
+// Response containing file content
+message ReadResponse {
+  bytes content = 1;
+}
+
+// Request to write a file
+message WriteRequest {
+  string video_id = 1;
+  string filename = 2;
+  bytes content = 3;
+}
+
+// Response for write operation
+message WriteResponse {
+  bool success = 1;
+}
+
+// Request to delete a file
+message DeleteRequest {
+  string video_id = 1;
+  string filename = 2;
+}
+
+// Response for delete operation
+message DeleteResponse {
+  bool success = 1;
+}
+
+// Request to list video IDs
+message ListVideoIDsRequest {}
+
+// Response containing list of video IDs
+message ListVideoIDsResponse {
+  repeated string video_ids = 1;
+}
+
+// Request to list files for a video
+message ListFilesRequest {
+  string video_id = 1;
+}
+
+// Response containing list of files
+message ListFilesResponse {
+  repeated string filenames = 1;
+} 
