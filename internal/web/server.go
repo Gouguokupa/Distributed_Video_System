@@ -329,6 +329,8 @@ func (s *server) handleVideoContent(w http.ResponseWriter, r *http.Request) {
 	}
 	videoId := parts[0]
 	filename := parts[1]
+	
+	fmt.Printf("Serving video content: videoId=%s, filename=%s\n", videoId, filename)
 
 	// Check if video exists
 	if _, err := s.metadataService.Read(videoId); err != nil {
